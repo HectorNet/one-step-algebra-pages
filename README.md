@@ -25,6 +25,6 @@
 
 ## AI 連線更新
 
-已新增連線設定、模型 enum 驗證、失敗時的規則提示、請求去重及額度限制。**目前尚未配置 OpenAI 金鑰或發佈後端，AI 尚未啟用**；原有練習與紀錄可繼續使用。後端需求見 [backend/README.md](backend/README.md)。不能將 API Key 填進網站或前端建置產物。
+已新增連線設定、模型 enum 驗證、失敗時的規則提示、請求去重及額度限制。**金鑰已由後端 secret 保存，老師私有後端已部署；目前 API 額度不足，AI 尚未啟用**；原有練習與紀錄可繼續使用。後端需求見 [backend/README.md](backend/README.md)。不能將 API Key 填進網站或前端建置產物。
 
 Node.js 24 執行 `npm test` 與 `npm run check` 可驗證公開版本，GitHub Actions 也會執行。測試使用模擬模型與真實 SQLite，沒有付費 API 呼叫。

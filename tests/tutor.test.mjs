@@ -82,3 +82,6 @@ test('network wait is outside storage transaction and cannot earn independent cr
 });
 
 test('public bank retains all 1056 original grading variants', async()=>{const {grade}=await import('../assets/math.mjs');const bank=JSON.parse(readFileSync(new URL('../assets/question-bank.json',import.meta.url)));assert.equal(bank.length,1056);for(const q of bank)assert.equal(grade(q,q.answer).correct,true,q.id);});
+
+test('disabled billing gate makes no provider calls',async()=>{const f=fixture();f.env.API_ENABLED='0';assert.equal((await f.call()).status,503);assert.equal(f.calls.length,0);});
+test('inactive service never saves a classroom code',async()=>{const remote=makeRemoteTutor({preferences:kv(),session:kv(),fetcher:async()=>Response.json({ready:false})});await assert.rejects(remote.configure('https://tutor.test',secret),/尚未啟用/);assert.equal(remote.settings().hasCode,false);});

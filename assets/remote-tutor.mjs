@@ -1,5 +1,6 @@
 // Provider secrets never enter this module. The classroom code authorizes our backend only.
 const CARDS = new Set(['hint','concept','check_work','encourage','off_topic','answer_boundary']);
+const DEFAULT_ENDPOINT='https://one-step-tutor-hectornet.quirkylion66.chatgpt.site';
 const CONFIG_KEY='one-step-tutor-endpoint-v1', CODE_KEY='one-step-tutor-code-v1';
 export function endpointURL(value){
   const url=new URL(String(value).trim());
@@ -8,15 +9,15 @@ export function endpointURL(value){
 }
 export function makeRemoteTutor({preferences,session,fetcher=fetch}){
   let ready=false;
-  const settings=()=>({endpoint:preferences.getItem(CONFIG_KEY)||'',hasCode:!!session.getItem(CODE_KEY),ready});
+  const settings=()=>({endpoint:preferences.getItem(CONFIG_KEY)||DEFAULT_ENDPOINT,hasCode:!!session.getItem(CODE_KEY),ready});
   async function configure(endpoint,code){
     const base=endpointURL(endpoint);
     code=String(code||'').trim();
     if(!code||code.length<16||code.length>200||/^sk-/.test(code))throw new Error('這裡只接受老師提供的試用通行碼，不能填 OpenAI API Key。');
-    const response=await fetcher(base+'/api/status',{headers:{Authorization:'Bearer '+code},credentials:'omit',redirect:'error',signal:AbortSignal.timeout(8000)});
+    let response;try{response=await fetcher(base+'/api/status',{headers:{Authorization:'Bearer '+code},credentials:'omit',redirect:'error',signal:AbortSignal.timeout(8000)});}catch{throw new Error('目前無法連接輔導服務。服務可能尚未開放，請先使用規則提示。');}
     if(!response.ok)throw new Error(response.status===401?'試用通行碼不正確。':'輔導服務尚未完成設定，請稍後再試。');
     const result=await response.json();
-    if(result.ready!==true)throw new Error('後端尚未完成模型金鑰設定，現在仍可使用規則提示。');
+    if(result.ready!==true)throw new Error('輔導服務的 AI 尚未啟用，現在仍可使用規則提示。');
     preferences.setItem(CONFIG_KEY,base);session.setItem(CODE_KEY,code);ready=true;
     return settings();
   }
