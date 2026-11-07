@@ -1,5 +1,6 @@
 import {grade,checkStep} from './math.mjs';
 import {indexedStore} from './storage.mjs';
+import {remoteTutor} from './remote-tutor.mjs';
 
 const PUBLIC=new Set(['id','skill_id','level','chapter_id','skill_title','template_id','kind','prompt','context','math','options','statement','instruction','answer_type']);
 const publicQuestion=q=>Object.fromEntries(Object.entries(q).filter(([key])=>PUBLIC.has(key)));
@@ -10,7 +11,7 @@ const CLIENT_EVENTS=new Set(['question_viewed','answer_changed','explanation_cha
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
 const modeFor=user=>user.role==='teacher'?'teacher_trial':'student_operation';
 
-export function makeAPI({store,curriculum,bank,session,uuid=()=>crypto.randomUUID(),clock=()=>new Date().toISOString()}){
+export function makeAPI({store,curriculum,bank,session,uuid=()=>crypto.randomUUID(),clock=()=>new Date().toISOString(),router=null}){
   const skills=Object.fromEntries(curriculum.chapters.flatMap(c=>c.skills.map(s=>[s.id,{...s,chapter_id:c.id}]))),order=Object.keys(skills);
   const pools=new Map();
   for(const q of bank){const key=`${q.skill_id}:${q.level}:${q.kind}`;if(!pools.has(key))pools.set(key,[]);pools.get(key).push(q);}
@@ -123,9 +124,9 @@ export function makeAPI({store,curriculum,bank,session,uuid=()=>crypto.randomUUI
     row.assisted||=v.valid;record(d,user,'step_checked',{valid:v.valid,correct:v.correct},run,id);
     return {...v,reply,assisted:row.assisted};
   }
-  function chat(d,user,id,body){
+  function chat(d,user,id,body,remote=null){
     const prior=d.chats.find(c=>c.client_id===body.client_id);
-    if(prior){if(prior.user_id!==user.id||prior.question_id!==id)fail(409,'重複的訊息識別碼。');return {reply:prior.reply,card_id:prior.card_id,provider:'rules',provider_status:'local_only',assisted:prior.assisted};}
+    if(prior){if(prior.user_id!==user.id||prior.question_id!==id)fail(409,'重複的訊息識別碼。');return {reply:prior.reply,card_id:prior.card_id,provider:prior.provider,provider_status:prior.provider_status||'local_only',assisted:prior.assisted};}
     const {row,run,q}=owned(d,user,id);if(row.status!=='open')fail(409,'這題已完成，請開始下一題再繼續。');
     const message=String(body.message||'').trim();if(!message||message.length>1000)fail(422,'請輸入 1000 字以內的問題。');
     const skill=skills[q.skill_id];let card='hint',reply;
@@ -133,8 +134,11 @@ export function makeAPI({store,curriculum,bank,session,uuid=()=>crypto.randomUUI
     else if(body.action==='concept'||/是什麼|意思|觀念|為什麼|公理|分配律|同類項/.test(message))card='concept';
     else if(body.action!=='hint'&&(/對嗎|檢查|算式|步驟/.test(message)||message.includes('=')))card='check_work';
     else if(/不會|好難|放棄|挫折/.test(message))card='encourage';
+    if(card!=='answer_boundary'&&remote?.provider==='llm'&&['hint','concept','check_work','encourage','off_topic','answer_boundary'].includes(remote.card))card=remote.card;
+    const provider=remote?.provider==='llm'?'llm':'rules',provider_status=remote?.provider_status||'local_only';
     if(card==='answer_boundary')reply=boundary;
     else if(card==='concept')reply=skill.concept+'\n\n你能指出這個觀念和目前哪個地方有關嗎？';
+    else if(card==='off_topic')reply='我們先專注在這一題。你想確認題意、相關觀念，還是自己寫出的步驟？';
     else if(card==='encourage')reply='可以慢慢想。先寫下你確定的一小步，再檢查這一步的理由。需要時，也可以先練一題較簡單的同類題。';
     else if(card==='check_work'){
       const match=message.match(/(?:^|[：:\s])([xX0-9(（+−\-][xX0-9+−\-*/×÷().=＝（）\s]{1,200})(?:[？?。]|$)/);
@@ -142,10 +146,10 @@ export function makeAPI({store,curriculum,bank,session,uuid=()=>crypto.randomUUI
       reply=!v?'請把你自己寫出的算式放到左側的「我的解題步驟」，再點選檢查。':!v.valid?v.message:v.correct?'你寫的這一步通過檢查。請自己接著完成，或把最終答案提交到左側。':'這一步還需要調整。'+skill.hints[Math.min(row.hint_count,2)];
     }else reply=skill.hints[Math.min(row.hint_count,2)]+'\n\n先寫下一個你願意嘗試的想法，我們再檢查。';
     row.assisted||=card!=='answer_boundary';
-    d.chats.push({id:uuid(),client_id:body.client_id,question_id:id,user_id:user.id,mode:run.mode,message,reply,card_id:card,provider:'rules',assisted:row.assisted,created_at:clock(),skill_id:q.skill_id});
-    record(d,user,'chat_sent',{action:body.action||'chat'},run,id);record(d,user,'chat_replied',{card_id:card,provider:'rules',provider_status:'local_only'},run,id);
+    d.chats.push({id:uuid(),client_id:body.client_id,question_id:id,user_id:user.id,mode:run.mode,message,reply,card_id:card,provider,provider_status,assisted:row.assisted,created_at:clock(),skill_id:q.skill_id});
+    record(d,user,'chat_sent',{action:body.action||'chat'},run,id);record(d,user,'chat_replied',{card_id:card,provider,provider_status},run,id);
     if(card==='hint'){record(d,user,'hint_requested',{hint_index:Math.min(row.hint_count,2)},run,id);row.hint_count++;}
-    return {reply,provider:'rules',provider_status:'local_only',card_id:card,assisted:row.assisted};
+    return {reply,provider,provider_status,card_id:card,assisted:row.assisted};
   }
   function events(d,user,body){
     const run=body.run_id?d.runs.find(r=>r.id===body.run_id&&r.user_id===user.id):null;
@@ -196,7 +200,22 @@ export function makeAPI({store,curriculum,bank,session,uuid=()=>crypto.randomUUI
   }
   return async function api(path,body){
     const url=new URL(path,'https://local.invalid');
+    const chatMatch=url.pathname.match(/^\/api\/questions\/([^/]+)\/chat$/);let remote=null;
+    if(chatMatch&&router){
+      // The network wait must happen outside the IndexedDB transaction.
+      const request=await store.transact(d=>{
+        const user=current(d),{row}=owned(d,user,chatMatch[1]),message=String(body?.message||'').trim();
+        if(row.status!=='open')fail(409,'這題已完成，請開始下一題再繼續。');
+        if(!message||message.length>1000)fail(422,'請輸入 1000 字以內的問題。');
+        if(d.chats.some(c=>c.client_id===body.client_id)||answerRequest.test(message)||/對嗎|檢查|算式|步驟|=/.test(message))return null;
+        // Reserve assistance before waiting, so another tab cannot claim independent credit.
+        row.assisted=true;
+        return {request_id:body.client_id,bank_id:row.bank_id,message,action:body.action||'chat'};
+      });
+      if(request){try{remote=await router(request);}catch{remote={provider_status:'provider_unavailable'};}}
+    }
     return store.transact(d=>{
+
       if(url.pathname==='/api/bootstrap')return {curriculum:clone(curriculum),demo_available:false,tutor_configured:false,local_mode:true,local_profiles:d.profiles.filter(u=>u.active).map(clone),
         recording_notice:'作答、步驟、對話與操作紀錄只存在這個瀏覽器。請使用暱稱；老師試用與學生操作分開統計，可匯出保存。'};
       if(url.pathname==='/api/local/profiles'&&!body)return {profiles:d.profiles.filter(u=>u.active).map(clone)};
@@ -214,7 +233,7 @@ export function makeAPI({store,curriculum,bank,session,uuid=()=>crypto.randomUUI
       if(url.pathname==='/api/logout'){record(d,user,'logout',{},null,null,{mode:modeFor(user)});session.removeItem(sessionKey);session.removeItem(sessionIdKey);return {ok:true};}
       if(url.pathname==='/api/practice/start')return start(d,user,body||{});
       const match=url.pathname.match(/^\/api\/questions\/([^/]+)\/(attempt|step|chat)$/);
-      if(match)return ({attempt,step,chat})[match[2]](d,user,match[1],body||{});
+      if(match)return ({attempt,step,chat})[match[2]](d,user,match[1],body||{},remote);
       if(url.pathname==='/api/events')return events(d,user,body);
       if(url.pathname==='/api/teacher/dashboard')return dashboard(d,user,url.searchParams);
       if(url.pathname==='/api/teacher/export')return exportData(d,user,url.searchParams);
@@ -231,6 +250,6 @@ let browserAPI;
 export async function api(path,body){
   if(!browserAPI)browserAPI=Promise.all(['curriculum.json','question-bank.json'].map(async file=>{
     const r=await fetch(new URL(file,import.meta.url));if(!r.ok)throw new Error('練習資料載入失敗，請重新整理。');return r.json();
-  })).then(([curriculum,bank])=>makeAPI({store:indexedStore(),curriculum,bank,session:sessionStorage}));
+  })).then(([curriculum,bank])=>makeAPI({store:indexedStore(),curriculum,bank,session:sessionStorage,router:input=>remoteTutor().route(input)}));
   return (await browserAPI)(path,body);
 }

@@ -2,6 +2,8 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const LOCAL_MODE = document.documentElement.dataset.mode === 'local';
 let localModule;
+let tutorConnection;
+if(LOCAL_MODE)tutorConnection=(await import('./remote-tutor.mjs')).remoteTutor();
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const math = value => esc(value).replace(/x/g, '<i>x</i>');
 const icons = {
@@ -67,7 +69,7 @@ function brand() { return `<a class="brand" href="${LOCAL_MODE?'./':'/'}" aria-l
 function header() {
   return `<header class="topbar"><div class="topbar-left">${brand()}<span class="header-divider"></span><span class="header-caption">讓每一次思考，都向前一步。</span>
     ${state.user && state.user.role === 'teacher' && !state.user.is_demo ? `<nav class="tabbar" aria-label="老師功能"><button data-page="practice" class="${state.page==='practice'?'active':''}">練習空間</button><button data-page="dashboard" class="${state.page==='dashboard'?'active':''}">教學後台</button></nav>` : ''}</div>
-    <div class="topbar-right">${state.user ? `<span class="pill ${state.mode!=='student_operation'?'trial':''}"><span class="dot"></span>${modeLabel()}</span><div class="row"><span class="avatar">${esc(state.user.name.slice(0,1))}</span><span class="user-name">${esc(state.user.name)}</span></div>${LOCAL_MODE?'<button id="export-local" class="text-btn">匯出紀錄</button>':''}<button id="logout" class="text-btn">${LOCAL_MODE?'切換檔案':'登出'}</button>` : '<span class="pill neutral">七年級數學 · 課後練習</span>'}</div></header>`;
+    <div class="topbar-right">${state.user ? `<span class="pill ${state.mode!=='student_operation'?'trial':''}"><span class="dot"></span>${modeLabel()}</span><div class="row"><span class="avatar">${esc(state.user.name.slice(0,1))}</span><span class="user-name">${esc(state.user.name)}</span></div>${LOCAL_MODE?'<button id="tutor-settings" class="text-btn">AI 連線設定</button><button id="export-local" class="text-btn">匯出紀錄</button>':''}<button id="logout" class="text-btn">${LOCAL_MODE?'切換檔案':'登出'}</button>` : '<span class="pill neutral">七年級數學 · 課後練習</span>'}</div></header>`;
 }
 function renderLogin() {
   if (LOCAL_MODE) return renderLocalLogin();
@@ -150,31 +152,44 @@ function chatMessages() {
 }
 function tutorHTML() {
   const d=draft(), completed=state.practice.question_status==='solved';
-  return `<aside class="tutor-panel" aria-label="互動輔導助教"><header class="tutor-header"><div class="tutor-identity"><span class="tutor-avatar">${icon('spark')}</span><div><h2>一起想，別急。</h2><p>你的數學輔導助教</p></div></div><span class="pill"><span class="dot"></span>${state.boot.tutor_configured?'AI 已設定':'規則輔導'}</span></header>
+  return `<aside class="tutor-panel" aria-label="互動輔導助教"><header class="tutor-header"><div class="tutor-identity"><span class="tutor-avatar">${icon('spark')}</span><div><h2>一起想，別急。</h2><p>你的數學輔導助教</p></div></div><span class="pill"><span class="dot"></span>${LOCAL_MODE?(state.tutorProvider==='llm'?'AI 輔導':tutorConnection.settings().hasCode?'AI 連線已設定':'規則輔導'):state.boot.tutor_configured?'AI 已設定':'規則輔導'}</span></header>
     <div class="chat-area" id="chat-area" role="log" aria-live="polite" aria-label="輔導對話"><div class="chat-date">每一步，都由你自己完成</div><div class="message"><span class="mini-avatar">${icon('spark')}</span><div class="bubble"><span class="message-name">一步助教</span>嗨，準備好一起想一想了嗎？\n\n你可以問我觀念、請我給提示，或讓我檢查你自己寫出的算式。先從你知道的地方開始就好。</div></div>
       ${chatMessages().map(m=>`<div class="message ${m.role==='user'?'user':''}"><span class="mini-avatar">${icon('spark')}</span><div class="bubble">${esc(m.text)}</div></div>`).join('')}</div>
     <div class="quick-prompts"><button class="request-btn" id="hint-button" ${completed?'disabled':''}>${icon('bulb')}給我一點提示</button><button class="request-btn" id="concept-button" ${completed?'disabled':''}>${icon('book')}解釋這個觀念</button></div>
     <form class="chat-compose" id="chat-form"><div class="chat-input-row"><label class="hidden" for="chat-input">向助教提問</label><textarea id="chat-input" rows="2" maxlength="1000" placeholder="${completed?'做得很好，開始下一題再繼續聊。':'我想問……'}" ${completed?'disabled':''}>${esc(d.chat)}</textarea><button class="send-btn request-btn" id="send-message" type="submit" aria-label="送出問題" ${completed?'disabled':''}>${icon('send')}</button></div><div class="chat-compose-footer"><span>${icon('lock')}不代寫這題的解法與答案</span><span>Ctrl + Enter 送出</span></div></form>
-    <div class="tutor-limit">${LOCAL_MODE?'本機規則引導 · 尚未連接 AI 模型 · 不需要 API 金鑰':state.boot.tutor_configured?'AI 協助選擇教學引導，回覆經受控提示規則處理。':'目前使用預先設計的引導；老師設定模型後可啟用 AI 判讀。'}</div></aside>`;
+    <div class="tutor-limit">${LOCAL_MODE?(tutorConnection.settings().hasCode?'已設定 AI 連線 · AI 判讀提問，回覆使用受控提示。':'目前使用本機規則引導 · 可在「AI 連線設定」連接老師的輔導服務。'):state.boot.tutor_configured?'AI 協助選擇教學引導，回覆經受控提示規則處理。':'目前使用預先設計的引導；老師設定模型後可啟用 AI 判讀。'}</div></aside>`;
 }
 function renderPractice() {
   if(!state.practice?.question) return;
   const info=skillInfo(state.practice.question.skill_id);
   $('#app').innerHTML=`${header()}<div class="app-shell">${sidebar()}<main id="main" class="workspace"><div class="workspace-heading"><div><div class="breadcrumb"><span>七年級數學</span><span>／</span><span>${info.chapter.id} ${esc(info.chapter.title)}</span></div><h1>${esc(info.title)}</h1></div><div class="session-info"><strong>專注現在這一小步。</strong><br><span id="sync-indicator" class="sync-indicator">${state.queue.length?'操作紀錄待同步':'操作紀錄已同步'}</span></div></div>
     ${state.mode==='demo'?'<div class="notice-banner">這是示範體驗，紀錄不會列入學生學習統計。正式試用請以老師建立的登入碼登入。</div>':''}
-    ${LOCAL_MODE?`<div class="notice-banner">本機體驗版 · ${modeLabel()} · 進度與操作紀錄保存在這個瀏覽器，可從老師檔案匯出。右側提供規則引導。</div>`:state.mode==='teacher_trial'?'<div class="notice-banner">你正在老師試用模式。這裡的作答會獨立記錄，學生統計會排除這些操作。</div>':''}
+    ${LOCAL_MODE?`<div class="notice-banner">本機體驗版 · ${modeLabel()} · 進度與操作紀錄保存在這個瀏覽器，可從老師檔案匯出。右側提供受控輔導。</div>`:state.mode==='teacher_trial'?'<div class="notice-banner">你正在老師試用模式。這裡的作答會獨立記錄，學生統計會排除這些操作。</div>':''}
     <div class="workspace-columns"><section class="practice-column" aria-label="題目與作答">${questionHTML()}${planHTML()}</section>${tutorHTML()}</div></main></div>`;
   bindHeader();bindPractice();updateSync();
   const chat=$('#chat-area');chat.scrollTop=chat.scrollHeight;
 }
 function bindHeader() {
+  $('#tutor-settings')?.addEventListener('click',showTutorSettings);
   $('#export-local')?.addEventListener('click',()=>runAction(async()=>{heartbeatRemainder();await flushEvents();downloadLocal(await api('/api/local/export'));}));
   $('#logout')?.addEventListener('click',()=>runAction(async()=>{
     heartbeatRemainder();await flushEvents();await api('/api/logout',{});state.user=null;state.practice=null;state.mode=null;state.queue=[];state.drafts={};
+    if(LOCAL_MODE){tutorConnection.disconnect();state.tutorProvider=null;}
     if(LOCAL_MODE)state.boot.local_profiles=(await api('/api/local/profiles')).profiles;
     renderLogin();
   }));
   $$('[data-page]').forEach(button=>button.addEventListener('click',()=>changePage(button.dataset.page)));
+}
+function showTutorSettings(){
+  const info=tutorConnection.settings(),dialog=document.createElement('dialog');dialog.className='tutor-settings-dialog';
+  dialog.innerHTML=`<form id="tutor-connect-form"><h2>連接 AI 輔導</h2><p>使用老師提供的輔導服務與試用通行碼。OpenAI 金鑰由後端保管，本頁不接受 API Key。</p><label class="label" for="tutor-endpoint">輔導服務網址</label><input class="input" id="tutor-endpoint" type="url" required value="${esc(info.endpoint)}" placeholder="https://老師提供的服務網址"><label class="label local-role-label" for="tutor-code">試用通行碼</label><input class="input" id="tutor-code" type="password" required autocomplete="off" placeholder="由老師提供，不是 API Key"><p class="recording">連線後，題目和你送出的提問會交由輔導服務判讀。暱稱、完整操作紀錄與其他學生資料不會一併傳送。通行碼只保留於這個頁籤。</p><p id="tutor-connect-error" class="form-error" role="alert"></p><div class="row"><button class="primary" type="submit">確認並連接</button><button class="secondary" type="button" id="tutor-disconnect">使用規則提示</button><button class="text-btn" type="button" id="tutor-close">關閉</button></div></form>`;
+  document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.showModal();
+  $('#tutor-close',dialog).onclick=()=>dialog.close();
+  $('#tutor-disconnect',dialog).onclick=()=>{tutorConnection.disconnect();state.tutorProvider='rules';dialog.close();renderPractice();toast('已切換為本機規則提示。');};
+  $('#tutor-connect-form',dialog).onsubmit=async e=>{e.preventDefault();const b=$('button[type="submit"]',dialog);b.disabled=true;
+    try{await tutorConnection.configure($('#tutor-endpoint',dialog).value,$('#tutor-code',dialog).value);state.tutorProvider=null;dialog.close();renderPractice();toast('AI 連線已設定；下一次提問時會嘗試模型判讀。');}
+    catch(error){$('#tutor-connect-error',dialog).textContent=error.message;b.disabled=false;}
+  };
 }
 function downloadLocal(result){
   const url=URL.createObjectURL(new Blob([result.content],{type:result.type}));
@@ -266,7 +281,8 @@ async function sendChat(message,action='chat') {
   const q=state.practice.question;
   const result=await api(`/api/questions/${q.id}/chat`,{client_id:crypto.randomUUID(),message,action});
   state.practice.chats.push({message,reply:result.reply,provider:result.provider,created_at:new Date().toISOString()});
-  state.practice.assisted=result.assisted;draft().chat='';renderPractice();
+  state.practice.assisted=result.assisted;state.tutorProvider=result.provider;draft().chat='';renderPractice();
+  if(result.provider_status==='request_limit')toast('AI 試用額度暫時用完，這次使用規則提示。');
   if(result.provider_status==='provider_unavailable')toast('AI 連線暫時無法使用，這次使用受控提示協助你。');
 }
 async function checkStep() {

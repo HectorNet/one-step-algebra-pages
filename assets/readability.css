@@ -15,3 +15,5 @@
 .local-role-label { margin-top: 15px; }
 .local-existing { padding-bottom: 22px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
 .local-create-button { width: 100%; margin-top: 14px; }
+
+.tutor-settings-dialog{width:min(92vw,560px);border:1px solid #dbe3d7;border-radius:20px;padding:28px;color:#274839;background:#fff;box-shadow:0 20px 80px #183a2933}.tutor-settings-dialog::backdrop{background:#183a2955}.tutor-settings-dialog p{line-height:1.7}.tutor-settings-dialog .row{flex-wrap:wrap;gap:10px}.tutor-settings-dialog h2{margin-top:0}
