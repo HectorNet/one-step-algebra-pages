@@ -1,0 +1,17 @@
+/* Keep student-facing reading comfortable on a desktop. */
+.skill-btn { font-size: 12px; }
+.bubble { font-size: 14px; line-height: 1.85; color: #536448; }
+.chat-input-row textarea { font-size: 13px; }
+.question-context { font-size: 15px; }
+.question-instruction { font-size: 12px; color: #738366; }
+.explanation-wrap textarea { font-size: 13px; }
+.tutor-header h2 { font-size: 15px; }
+.quick-prompts button { font-size: 11px; }
+.next-plan p { font-size: 12px; color: #7b8c6d; }
+.feedback p { font-size: 13px; }
+.data-table { font-size: 12px; }
+.conversation { font-size: 12px; }
+@media (max-width: 1000px) { .skill-btn { font-size: 11px; } }
+.local-role-label { margin-top: 15px; }
+.local-existing { padding-bottom: 22px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+.local-create-button { width: 100%; margin-top: 14px; }
