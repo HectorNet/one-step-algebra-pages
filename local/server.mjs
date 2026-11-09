@@ -107,7 +107,7 @@ export async function startLocalRuntime({root = ROOT, directory, vault: supplied
       requireValue(!request.headers.origin || request.headers.origin === origin, 'origin_not_allowed', 403);
       requireValue(!request.headers['sec-fetch-site'] || ['same-origin', 'none'].includes(request.headers['sec-fetch-site']), 'origin_not_allowed', 403);
       if (request.method === 'GET' && STATIC.has(url.pathname)) {
-        requireValue(!url.search, 'invalid_request');
+        requireValue(!url.search || url.searchParams.size === 1 && /^[a-zA-Z0-9-]{1,80}$/.test(url.searchParams.get('v') || ''), 'invalid_request');
         if (url.pathname === '/' || url.pathname === '/index.html') {
           if (!session) {
             for (const [id, item] of sessions) if (now() - item.touched > 86400000) { deactivate(item); sessions.delete(id); }

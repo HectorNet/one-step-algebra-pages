@@ -197,6 +197,8 @@ async function runtimeFixture(t) {
 test('local HTTP runtime authenticates, discovers account models, streams enum and never exposes provider or bank secrets', async t => {
   const f = await runtimeFixture(t);
   assert.match(await f.home.text(), /data-runtime="chatgpt"/);
+  const script = await f.call('/assets/app.js?v=20261109-chatgpt');
+  assert.equal(script.status, 200); assert.match(script.headers.get('content-type'), /javascript/);
   const {result, status} = await f.connect(); assert.equal(result.status, 200);
   assert.equal(status.ready, true); assert.equal(status.verified, false); assert.equal(status.models.length, 1);
   const bank = JSON.parse(await readFile(new URL('../assets/question-bank.json', import.meta.url)));
