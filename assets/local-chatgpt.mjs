@@ -13,12 +13,23 @@ const MESSAGES = {
   chatpass_v2_scope_not_authorized: '這次授權不允許模型請求，請確認帳號及授權範圍。',
   sign_in_required: '請重新登入 ChatGPT，之後再試一次。',
   models_unavailable: '暫時無法取得模型，請重新整理模型或稍後再試。',
+  models_access_denied: '登入資料已保存，但模型清單請求被拒絕。請查看下方 HTTP 狀態與錯誤代碼，以確認授權或帳號存取限制。',
+  models_request_limited: '模型清單請求受到限制，請稍後重試；無需新增授權。',
+  models_http_error: '模型清單服務回覆錯誤。請查看下方診斷資訊，無需重複新增授權。',
+  models_network_error: '本機程式無法連上模型清單服務。請查看下方連線錯誤；重新授權不會修復網路連線。',
+  models_response_invalid: '模型清單的回傳格式無法辨識。授權資料保留，請提供下方診斷資訊以便修正。',
+  models_empty: '服務已回覆，但這個連線沒有可顯示的模型。尚未完成 AI 可用性驗證。',
   request_limit: '已達本機試用的請求限制，先使用規則提示。',
   request_in_progress: '上一個請求尚在處理，請稍後再試。',
   session_changed: '另一個分頁已切換學習檔案，請重新選擇檔案並授權。',
   provider_unavailable: '模型暫時無法回應，這次改用規則提示。',
 };
 export const localStatusMessage = code => MESSAGES[code] || '目前無法完成連線，請重新登入或稍後再試。';
+export function localDiagnosticText(info) {
+  const d=info?.diagnostic;if(!d)return '';
+  return ['模型清單診斷',Number.isInteger(d.http_status)?'HTTP '+d.http_status:'未收到 HTTP 回應',
+    d.provider_code,d.transport,d.response_shape?('格式：'+d.response_shape):null,d.request_id].filter(Boolean).join(' · ');
+}
 
 export function makeLocalChatGPT({fetcher = fetch} = {}) {
   let context, info = {connections: [], ready: false, verified: false, status: 'not_connected', models: []};
@@ -67,7 +78,15 @@ export function makeLocalChatGPT({fetcher = fetch} = {}) {
       return (await call('auth/start', {connection_id})).navigate;
     },
     signOut: async connection_id => { const result = await call('sign-out', {connection_id}); await refresh(); return result; },
-    models: async () => { info = await call('models', {}); return settings(); },
+    models: async () => {
+      try { info = await call('models', {}); return settings(); }
+      catch(error){await refresh();throw error;}
+    },
+    resume: async connection_id => {
+      if(context)await setContext(context.profile_id,context.mode);
+      try { info=await call('resume',{connection_id});return settings(); }
+      catch(error){await refresh();throw error;}
+    },
     selectModel: async model => { info = await call('model', {model}); return settings(); },
   };
 }

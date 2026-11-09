@@ -196,15 +196,20 @@ function showTutorSettings(){
   };
 }
 async function showChatGPTSettings(){
-  const {localStatusMessage}=await import('./local-chatgpt.mjs');
+  const {localStatusMessage,localDiagnosticText}=await import('./local-chatgpt.mjs');
   const dialog=document.createElement('dialog');dialog.className='tutor-settings-dialog chatgpt-settings';
   dialog.innerHTML=`<h2>用自己的 ChatGPT，陪你想。</h2><p>本機版透過 OpenAI 官方頁面登入，使用目前登入者自行授權的 ChatGPT 方案。這不是額外贈送的額度。</p><p class="recording">題目與你送出的提問會交由 OpenAI 判讀。模型只能選擇受控提示；完整學習紀錄與其他學生資料不會一併傳送。</p><div id="chatgpt-account-state" aria-live="polite"></div><p id="chatgpt-settings-error" class="form-error" role="alert"></p><div class="row"><button class="primary" id="chatgpt-add-account">Continue with ChatGPT</button><button class="secondary" id="chatgpt-refresh">重新整理狀態</button></div><p><a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noopener noreferrer">管理 ChatGPT 使用量與授權</a></p><p class="recording">每位學生需使用自己的合資格帳號。切換學習檔案會停止原連線，不會接續使用老師的方案。若帳號不支援，仍可使用規則提示。</p><div class="row"><button class="secondary" id="chatgpt-pause">暫停 AI，使用規則提示</button><button class="text-btn" id="chatgpt-close">關閉</button></div>`;
   document.body.append(dialog);dialog.showModal();
   let last='',polling=false;
   function paint(info){
     const current=JSON.stringify(info);if(current===last)return;last=current;
-    $('#chatgpt-account-state',dialog).innerHTML=`<div class="notice-banner"><strong>${info.verified?'ChatGPT 已實測可用':info.ready?'已授權，等待第一次實測':'尚未啟用 AI'}</strong><p>${esc(localStatusMessage(info.status))}</p>${info.email?`<p>使用中的帳號：${esc(info.email)}</p>`:''}</div>${info.connections.length?`<ul class="chatgpt-connections">${info.connections.map(c=>`<li><div><strong>${esc(c.email)}</strong><small>連線 ${esc(c.label)} · ${c.id===info.active?'使用中':c.signed_in?'已保存授權':'需要登入'}</small></div><button class="secondary" data-chatgpt-connect="${esc(c.id)}">${c.id===info.active?'重新授權':'連接'}</button><button class="text-btn" data-chatgpt-signout="${esc(c.id)}">登出並清除授權</button></li>`).join('')}</ul>`:''}${info.models.length?`<label class="label" for="chatgpt-model">目前帳號可用的模型</label><select class="input" id="chatgpt-model">${info.models.map(m=>`<option value="${esc(m.slug)}" ${m.slug===info.model?'selected':''}>${esc(m.display_name)}</option>`).join('')}</select><p class="recording">模型清單不等於已驗證可用；收到完整模型回覆後才會確認成功。</p>`:''}`;
-    $$('[data-chatgpt-connect]',dialog).forEach(b=>b.onclick=()=>connect(b.dataset.chatgptConnect));
+    $('#chatgpt-account-state',dialog).innerHTML=`<div class="notice-banner"><strong>${info.verified?'ChatGPT 已實測可用':info.ready?'已授權，等待第一次實測':'尚未啟用 AI'}</strong><p>${esc(localStatusMessage(info.status))}</p>${info.plan_authorized?'<p>已取得 ChatGPT 方案使用授權；模型存取仍須驗證。</p>':''}${info.email?`<p>目前選擇的帳號：${esc(info.email)}</p>`:''}${info.diagnostic?`<p class="chatgpt-diagnostic">${esc(localDiagnosticText(info))}</p>`:''}</div>${info.connections.length?`<ul class="chatgpt-connections">${info.connections.map(c=>`<li><div><strong>${esc(c.email)}</strong><small>連線 ${esc(c.label)} · ${c.id===info.active?'目前選擇':c.signed_in?(c.sharing?'已儲存方案授權':'已儲存登入'):'需要登入'}</small></div><button class="secondary" data-chatgpt-connect="${esc(c.id)}">${c.signed_in&&c.sharing?'重新取得模型':'登入與授權'}</button><button class="text-btn" data-chatgpt-signout="${esc(c.id)}">登出並清除授權</button></li>`).join('')}</ul>`:''}${info.models.length?`<label class="label" for="chatgpt-model">目前帳號可用的模型</label><select class="input" id="chatgpt-model">${info.models.map(m=>`<option value="${esc(m.slug)}" ${m.slug===info.model?'selected':''}>${esc(m.display_name)}</option>`).join('')}</select><p class="recording">模型清單不等於已驗證可用；收到完整模型回覆後才會確認成功。</p>`:''}<p class="recording">本機程式版本：${esc(info.runtime_version||'未提供')}。${info.connections.length?'已有連線時，可先按「重新取得模型」，沿用原授權。':''}</p>`;
+    $('#chatgpt-add-account',dialog).textContent=info.connections.length?'新增其他 ChatGPT 帳號':'Continue with ChatGPT';
+    $$('[data-chatgpt-connect]',dialog).forEach(b=>b.onclick=()=>{
+      const c=info.connections.find(c=>c.id===b.dataset.chatgptConnect);
+      if(c?.signed_in&&c.sharing)return act(()=>tutorConnection.resume(c.id));
+      return connect(b.dataset.chatgptConnect);
+    });
     $$('[data-chatgpt-signout]',dialog).forEach(b=>b.onclick=()=>act(async()=>{
       const result=await tutorConnection.signOut(b.dataset.chatgptSignout);
       if(!result.revoked)$('#chatgpt-settings-error',dialog).textContent='本機憑證已清除，但未能確認遠端撤銷。請至 ChatGPT 設定中中斷此應用程式的授權。';
@@ -215,7 +220,7 @@ async function showChatGPTSettings(){
   async function act(operation){
     $$('button',dialog).forEach(b=>b.disabled=true);$('#chatgpt-settings-error',dialog).textContent='';
     try{await operation();paint(await tutorConnection.refresh());}
-    catch(error){$('#chatgpt-settings-error',dialog).textContent=error.message||'暫時無法連線。';}
+    catch(error){paint(tutorConnection.settings());$('#chatgpt-settings-error',dialog).textContent=error.message||'暫時無法連線。';}
     finally{$$('button',dialog).forEach(b=>b.disabled=false);}
   }
   async function connect(id){
@@ -229,7 +234,7 @@ async function showChatGPTSettings(){
     });
   }
   $('#chatgpt-add-account',dialog).onclick=()=>connect();
-  $('#chatgpt-refresh',dialog).onclick=()=>act(()=>tutorConnection.models().catch(()=>tutorConnection.refresh()));
+  $('#chatgpt-refresh',dialog).onclick=()=>act(()=>tutorConnection.models());
   $('#chatgpt-close',dialog).onclick=()=>dialog.close();
   $('#chatgpt-pause',dialog).onclick=()=>act(async()=>{await tutorConnection.disconnect();await tutorConnection.setContext(state.user.id,state.mode);});
   const poll=setInterval(async()=>{if(polling||!dialog.isConnected)return;polling=true;try{paint(await tutorConnection.refresh());}finally{polling=false;}},2000);

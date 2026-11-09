@@ -10,6 +10,8 @@ import {openVault} from '../local/vault.mjs';
 import {startLocalRuntime} from '../local/server.mjs';
 import {makeLocalChatGPT} from '../assets/local-chatgpt.mjs';
 import {makeAPI} from '../assets/local-engine.js';
+import {readModelCatalog,modelDiagnostic} from '../local/model-catalog.mjs';
+import {localDiagnosticText} from '../assets/local-chatgpt.mjs';
 import {memoryStore} from '../assets/storage.mjs';
 
 const {privateKey, publicKey} = generateKeyPairSync('rsa', {modulusLength: 2048});
@@ -55,6 +57,11 @@ function provider() {
     }
     if (url.endsWith('/oauth/revoke')) return new Response('', {status: mock.revoke ? 200 : 503});
     if (url.endsWith('/v1/models')) {
+      if (mock.modelsNetworkError) throw mock.modelsNetworkError;
+      if (mock.modelsErrorStatus) return Response.json({error: {code: mock.modelErrorCode, message: TOKEN_VALUE, access_token: TOKEN_VALUE}},
+        {status: mock.modelsErrorStatus, headers: {'x-request-id': mock.requestId || 'req_0123456789abcdef0123456789abcdef'}});
+      if (mock.modelsRaw) return new Response(mock.modelsRaw, {headers:{'Content-Type':'text/html'}});
+      if (mock.modelsBody) return Response.json(mock.modelsBody);
       if (!mock.models) return Response.json({error: {}}, {status: 503});
       return Response.json({models: [{slug: 'model-test', display_name: 'Test model', visibility: 'list'},
         {slug: 'hidden', display_name: 'Hidden', visibility: 'hidden'}]});
@@ -297,6 +304,75 @@ test('malicious AI cards cannot add answers to student feedback or logs; teacher
   const data = await store.transact(d => d);
   assert.deepEqual(new Set(data.chats.map(c => c.mode)), new Set(['teacher_trial', 'student_operation']));
   assert.equal(JSON.stringify(data.events).includes('PRIVATE_ANSWER'), false);
+});
+
+test('model catalogs accept documented ChatGPT and standard API lists without exposing raw fields',()=>{
+  const response=new Response();
+  assert.deepEqual(readModelCatalog({models:[{slug:'gpt-test',display_name:'GPT Test',visibility:'list',access_token:TOKEN_VALUE},
+    {slug:'hidden',display_name:'Hidden',visibility:'hidden'}]},response),[{slug:'gpt-test',display_name:'GPT Test'}]);
+  assert.deepEqual(readModelCatalog({data:[{id:'gpt-test',object:'model',owned_by:'PRIVATE_OWNER'},
+    {id:'gpt-test'},{id:'invalid/model'},{id:TOKEN_VALUE+' bad'}]},response),[{slug:'gpt-test',display_name:'gpt-test'}]);
+  assert.throws(()=>readModelCatalog({data:[]},response),/models_empty/);
+  assert.throws(()=>readModelCatalog({models:[{slug:'private',visibility:'hidden'}]},response),/models_empty/);
+  assert.throws(()=>readModelCatalog({access_token:TOKEN_VALUE},response),/models_response_invalid/);
+});
+
+test('403 model failures preserve safe diagnostics and credentials, without hiding the actual denial',async t=>{
+  const f=await runtimeFixture(t);f.mock.modelsErrorStatus=403;f.mock.modelErrorCode='insufficient_permissions';
+  const {status}=await f.connect();
+  assert.equal(status.status,'models_access_denied');assert.equal(status.ready,false);assert.equal(status.plan_authorized,true);
+  assert.equal(status.diagnostic.http_status,403);assert.equal(status.diagnostic.provider_code,'insufficient_permissions');
+  assert.equal(status.diagnostic.request_id,'req_0123456789abcdef0123456789abcdef');
+  assert.equal(status.connections[0].signed_in,true);
+  assert.equal(JSON.stringify(status).includes(TOKEN_VALUE),false);
+  const response=await f.call('/api/local-ai/models',{}),body=await response.json();
+  assert.equal(response.status,403);assert.equal(body.error,'models_access_denied');assert.equal(body.diagnostic.http_status,403);
+  assert.equal(JSON.stringify(body).includes(TOKEN_VALUE),false);
+});
+
+test('successful retry clears stale failure status; resuming a saved connection does not repeat OAuth',async t=>{
+  const f=await runtimeFixture(t);f.mock.models=false;const first=await f.connect();
+  assert.equal(first.status.status,'models_http_error');assert.equal(first.status.diagnostic.http_status,503);
+  f.mock.models=true;f.mock.modelsBody={data:[{id:'gpt-test'}]};
+  const response=await f.call('/api/local-ai/resume',{connection_id:first.status.active}),status=await response.json();
+  assert.equal(response.status,200);assert.equal(status.ready,true);assert.equal(status.verified,false);
+  assert.equal(status.status,'awaiting_first_request');assert.equal(status.diagnostic,null);
+  assert.equal(f.vault.read().connections.length,1);
+  assert.equal(f.mock.calls.filter(c=>c.url.endsWith('/api/accounts/oauth/token')).length,1);
+  f.mock.modelsBody=null;const refreshed=await(await f.call('/api/local-ai/models',{})).json();
+  assert.equal(refreshed.ready,true);assert.equal(refreshed.model,'model-test');assert.equal(refreshed.diagnostic,null);
+  await f.call('/api/local-ai/context',{profile_id:profile2,mode:'student_operation'});
+  assert.equal((await f.call('/api/local-ai/resume',{connection_id:first.status.active})).status,404);
+});
+
+test('model diagnostics distinguish transport, non-JSON, unexpected schema and empty catalogs',async t=>{
+  const f=await runtimeFixture(t);await f.connect();
+  for(const [setup,expected,http] of [
+    [()=>{f.mock.modelsNetworkError=Object.assign(new Error(TOKEN_VALUE),{cause:{code:'ENOTFOUND'}});},'models_network_error',null],
+    [()=>{f.mock.modelsNetworkError=null;f.mock.modelsRaw='<html>'+TOKEN_VALUE+'</html>';},'models_response_invalid',200],
+    [()=>{f.mock.modelsRaw=null;f.mock.modelsBody={private:TOKEN_VALUE};},'models_response_invalid',200],
+    [()=>{f.mock.modelsBody={models:[]};},'models_empty',200]]){
+    setup();const response=await f.call('/api/local-ai/models',{}),body=await response.json();
+    assert.equal(body.error,expected);assert.equal(body.diagnostic.http_status,http);
+    assert.equal(JSON.stringify(body).includes(TOKEN_VALUE),false);
+    const status=await(await f.call('/api/local-ai/status')).json();assert.equal(status.status,expected);assert.equal(status.ready,false);
+  }
+});
+
+test('unknown error content and sensitive-shaped request IDs are excluded from diagnostics',()=>{
+  const result=modelDiagnostic(new Response('',{status:403,headers:{'x-request-id':TOKEN_VALUE}}),
+    {error:{code:TOKEN_VALUE,message:TOKEN_VALUE},access_token:TOKEN_VALUE});
+  assert.equal(result.provider_code,'unrecognized_error');assert.equal(result.request_id,null);
+  assert.equal(JSON.stringify(result).includes(TOKEN_VALUE),false);
+});
+
+test('frontend model refresh reports the failure and preserves status diagnostics for the next render',async()=>{
+  const adapter=makeLocalChatGPT({fetcher:async path=>path.endsWith('/models')?
+    Response.json({error:'models_access_denied',diagnostic:{http_status:403}},{status:403}):
+    Response.json({ready:false,status:'models_access_denied',connections:[],models:[],diagnostic:{http_status:403,provider_code:'insufficient_scope'}})});
+  await assert.rejects(adapter.models(),/模型清單請求被拒絕/);
+  assert.equal(adapter.settings().diagnostic.http_status,403);
+  assert.match(localDiagnosticText(adapter.settings()),/HTTP 403/);
 });
 
 test('credential vault uses private atomic files, rejects symlinks and prevents concurrent refresh processes', async t => {

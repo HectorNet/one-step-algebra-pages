@@ -1,5 +1,6 @@
 import {createHash, randomBytes, randomUUID, createPublicKey, verify} from 'node:crypto';
 import {LocalError, requireValue} from './errors.mjs';
+import {modelDiagnostic, modelTransportError, readModelCatalog} from './model-catalog.mjs';
 
 const ISSUER = 'https://auth.openai.com';
 const AUTHORIZE = ISSUER + '/api/accounts/authorize';
@@ -207,12 +208,24 @@ export function createChatGPT({vault, fetcher = fetch, now = () => Date.now(), i
     await clear(id); return {revoked};
   }
   async function models(id, owner) {
-    const response = await request(RESOURCE + '/models', {headers: {Authorization: 'Bearer ' + await access(id, owner)}});
-    if (!response.ok) { if (response.status === 401) await clear(id); throw new LocalError(response.status === 401 ? 'sign_in_required' : 'models_unavailable', response.status === 401 ? 401 : 503); }
-    const body = await smallJSON(response);
-    requireValue(Array.isArray(body.models), 'models_unavailable', 503);
-    return body.models.filter(m => m.visibility === 'list' && typeof m.slug === 'string' && typeof m.display_name === 'string')
-      .map(({slug, display_name}) => ({slug, display_name}));
+    const token = await access(id, owner);
+    let response;
+    try { response = await request(RESOURCE + '/models', {headers: {Authorization: 'Bearer ' + token}}); }
+    catch (error) { throw modelTransportError(error); }
+    let body;
+    try { body = await smallJSON(response); }
+    catch (error) {
+      if (error.name === 'TimeoutError' || error.name === 'AbortError' || error.cause) throw modelTransportError(error);
+      if (response.ok) throw new LocalError('models_response_invalid', 502, modelDiagnostic(response, null, 'non_json'));
+    }
+    if (!response.ok) {
+      const diagnostic = modelDiagnostic(response, body);
+      if (response.status === 401) await clear(id);
+      const code = response.status === 401 ? 'sign_in_required' : response.status === 403 ? 'models_access_denied' :
+        response.status === 429 ? 'models_request_limited' : 'models_http_error';
+      throw new LocalError(code, response.status === 401 ? 401 : response.status === 403 ? 403 : 503, diagnostic);
+    }
+    return readModelCatalog(body, response);
   }
   async function route(id, owner, model, context, signal) {
     const response = await fetcher(RESOURCE + '/responses', {method: 'POST', redirect: 'error', signal,

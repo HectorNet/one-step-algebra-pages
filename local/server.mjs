@@ -63,12 +63,18 @@ export async function startLocalRuntime({root = ROOT, directory, vault: supplied
   function deactivate(session) {
     oauth.cancel(session.id); session.controller?.abort(); session.controller = null;
     session.active = null; session.model = null; session.models = []; session.verified = false;
-    session.generation++; session.status = 'not_connected';
+    session.generation++; session.status = 'not_connected'; session.diagnostic = null;
+  }
+  function modelFailure(session, error) {
+    session.status = error instanceof LocalError ? error.code : 'models_unavailable';
+    session.diagnostic = error instanceof LocalError ? error.diagnostic || null : null;
+    session.models = []; session.model = null; session.verified = false;
   }
   function status(session) {
     const connections = session.owner ? oauth.list(session.owner) : [];
     const active = connections.find(c => c.id === session.active);
-    return {local_runtime: true, context: session.owner, ready: !!(active?.signed_in && active.sharing && session.model && !BLOCKED.has(session.status)),
+    return {local_runtime: true, runtime_version: '2026-11-10.1', diagnostic: session.diagnostic || null,
+      plan_authorized: !!(active?.signed_in && active.sharing), context: session.owner, ready: !!(active?.signed_in && active.sharing && session.model && !BLOCKED.has(session.status)),
       connections, active: active?.id || null, email: active?.email || null, models: session.models,
       model: session.model, verified: session.verified, status: session.status};
   }
@@ -94,8 +100,8 @@ export async function startLocalRuntime({root = ROOT, directory, vault: supplied
               const models = await oauth.models(target.active, target.owner);
               requireValue(target.generation === result.generation, 'session_changed');
               target.models = models; target.model = models[0]?.slug || null;
-              target.status = models.length ? 'awaiting_first_request' : 'models_unavailable';
-            } catch (error) { if (target.generation === result.generation) target.status = error instanceof LocalError ? error.code : 'models_unavailable'; }
+              target.status = 'awaiting_first_request'; target.diagnostic = null;
+            } catch (error) { if (target.generation === result.generation) modelFailure(target, error); }
           }
           response.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'}); response.end(callbackHTML(true));
         } catch (error) {
@@ -154,13 +160,23 @@ export async function startLocalRuntime({root = ROOT, directory, vault: supplied
         for (const item of sessions.values()) if (item.active === body.connection_id) deactivate(item);
         json(await oauth.signOut(body.connection_id, owner)); return;
       }
-      requireValue(session.active, 'sign_in_required', 401);
-      if (url.pathname === '/api/local-ai/models') {
-        const generation = session.generation, models = await oauth.models(session.active, session.owner);
-        requireValue(generation === session.generation, 'session_changed', 409);
-        session.models = models; session.model = models.some(m => m.slug === session.model) ? session.model : models[0]?.slug || null;
+      if (url.pathname === '/api/local-ai/resume' || url.pathname === '/api/local-ai/models') {
+        if (url.pathname.endsWith('/resume')) {
+          requireValue(oauth.list(session.owner).some(c => c.id === body.connection_id && c.signed_in && c.sharing), 'connection_not_found', 404);
+          deactivate(session); session.active = body.connection_id;
+        }
+        requireValue(session.active, 'sign_in_required', 401);
+        const generation = session.generation;
+        try {
+          const models = await oauth.models(session.active, session.owner);
+          requireValue(generation === session.generation, 'session_changed', 409);
+          session.models = models; session.model = models.some(m => m.slug === session.model) ? session.model : models[0]?.slug || null;
+          if (!session.verified) session.status = 'awaiting_first_request';
+          session.diagnostic = null;
+        } catch (error) { if (generation === session.generation) modelFailure(session, error); throw error; }
         json(status(session)); return;
       }
+      requireValue(session.active, 'sign_in_required', 401);
       if (url.pathname === '/api/local-ai/model') {
         requireValue(session.models.some(m => m.slug === body.model), 'invalid_model');
         session.model = body.model; session.verified = false;
@@ -198,7 +214,8 @@ export async function startLocalRuntime({root = ROOT, directory, vault: supplied
       if (cache.size > 1000) cache.delete(cache.keys().next().value);
       cache.set(key, {fingerprint, result}); json(result);
     } catch (error) {
-      if (!response.headersSent) json({error: error instanceof LocalError ? error.code : 'local_service_unavailable'}, error instanceof LocalError ? error.status : 503);
+      if (!response.headersSent) json({error: error instanceof LocalError ? error.code : 'local_service_unavailable',
+        ...(error instanceof LocalError && error.diagnostic ? {diagnostic: error.diagnostic} : {})}, error instanceof LocalError ? error.status : 503);
       else response.end();
     }
   });
