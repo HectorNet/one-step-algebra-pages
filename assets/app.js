@@ -1,6 +1,7 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const LOCAL_MODE = document.documentElement.dataset.mode === 'local';
+const LOCAL_CHATGPT = document.documentElement.dataset.runtime === 'chatgpt';
 let localModule;
 let tutorConnection;
 if(LOCAL_MODE)tutorConnection=(await import('./remote-tutor.mjs')).remoteTutor();
@@ -29,6 +30,7 @@ const eventNames = {
   progression_decision:'產生下一步練習建議',question_skipped:'跳過題目',skill_selected:'切換練習能力',
   heartbeat:'有效練習時間',tab_visibility:'頁籤顯示狀態',window_focus:'視窗焦點變更',navigation:'切換頁面',
   paste_detected:'貼上內容',session_end:'離開頁面',help_panel_toggled:'展開解題步驟',review_started:'開始間隔複習',
+  ai_connection_started:'開始 ChatGPT 授權',ai_connection_state:'變更 ChatGPT 連線狀態',
 };
 if(LOCAL_MODE)Object.assign(eventNames,{login:'選取本機檔案',logout:'離開本機檔案',student_created:'建立本機學生檔案',student_access_changed:'變更檔案狀態'});
 const state = {boot:null,user:null,mode:null,practice:null,page:'practice',feedback:null,busy:false,
@@ -91,8 +93,8 @@ function renderLogin() {
 }
 function renderLocalLogin() {
   const profiles=state.boot.local_profiles||[];
-  $('#app').innerHTML=`${header()}<main id="main" class="login-layout"><section class="login-hero"><span class="eyebrow">GITHUB PAGES · LOCAL EDITION</span><h1>把不會的地方，<br>變成<em>下一步。</em></h1><p>從自己的想法開始，讓規則引導陪你確認每一步。<br>不用 API 金鑰，打開網頁就能練習。</p><div class="hero-course"><span class="course-icon">x</span><div><strong>一元一次方程式</strong><p>3-1 式子的運算 ／ 3-2 解方程式 ／ 3-3 應用問題</p></div></div><div class="math-decoration" aria-hidden="true"><span class="math-tile">x</span><span class="math-tile">＋</span><span class="math-tile">？</span><span class="math-tile">＝</span><span class="math-tile">！</span></div><div class="login-bottom">本機體驗版 · 自行編寫的課後練習 · 無雲端同步</div></section>
-    <section class="login-card"><span class="eyebrow">YOUR LOCAL PRACTICE SPACE</span><h2>選擇你的練習檔案。</h2><p>老師試用與學生操作分開累積。<br>使用暱稱即可，這裡不需要密碼。</p>
+  $('#app').innerHTML=`${header()}<main id="main" class="login-layout"><section class="login-hero"><span class="eyebrow">GITHUB PAGES · LOCAL EDITION</span><h1>把不會的地方，<br>變成<em>下一步。</em></h1><p>從自己的想法開始，讓規則引導陪你確認每一步。<br>不用 API 金鑰，打開網頁就能練習。</p><div class="hero-course"><span class="course-icon">x</span><div><strong>一元一次方程式</strong><p>3-1 式子的運算 ／ 3-2 解方程式 ／ 3-3 應用問題</p></div></div><div class="math-decoration" aria-hidden="true"><span class="math-tile">x</span><span class="math-tile">＋</span><span class="math-tile">？</span><span class="math-tile">＝</span><span class="math-tile">！</span></div><div class="login-bottom">${LOCAL_CHATGPT?'ChatGPT 本機版 · 帳號由本人登入與授權':'GitHub Pages 體驗版 · 無雲端同步'}</div></section>
+    <section class="login-card">${LOCAL_CHATGPT?'':'<div class="notice-banner">想連接自己的 ChatGPT？<a href="https://github.com/HectorNet/one-step-algebra-pages/blob/main/local/README.md" target="_blank" rel="noopener noreferrer">下載電腦本機版</a>。這裡可直接使用規則提示練習。</div>'}<span class="eyebrow">YOUR LOCAL PRACTICE SPACE</span><h2>選擇你的練習檔案。</h2><p>老師試用與學生操作分開累積。<br>使用暱稱即可，這裡不需要密碼。</p>
     ${profiles.length?`<form id="local-select-form" class="local-existing"><label class="label" for="local-profile">接續這個瀏覽器的檔案</label><select class="input" id="local-profile">${profiles.map(p=>`<option value="${p.id}">${esc(p.name)} · ${p.role==='teacher'?'老師試用':'學生操作'}</option>`).join('')}</select><button class="primary" type="submit">接續練習 ${icon('arrow')}</button></form>`:''}
     <form id="local-create-form"><label class="label" for="local-name">${profiles.length?'或建立新的本機檔案':'你的暱稱'}</label><input class="input" id="local-name" maxlength="40" placeholder="例如：小禾" autocomplete="off" required><label class="label local-role-label" for="local-role">紀錄模式</label><select class="input" id="local-role"><option value="student">學生操作</option><option value="teacher">老師試用</option></select><p id="local-error" class="form-error" role="alert"></p><button class="${profiles.length?'secondary':'primary'} local-create-button" type="submit">建立檔案並開始 ${icon('arrow')}</button></form>
     <div class="recording">${icon('book')}<span>資料只存在此瀏覽器，換裝置不會自動同步。模式用來分類紀錄，並非帳號權限保護；共用電腦上的使用者可切換檔案。</span></div></section></main>`;
@@ -102,6 +104,7 @@ function renderLocalLogin() {
 }
 async function signedIn(data) {
   state.user=data.user;state.mode=data.mode;state.page='practice';state.practice=null;state.feedback=null;state.newCode=null;
+  if(LOCAL_CHATGPT)await tutorConnection.setContext(state.user.id,state.mode);
   try { state.queue=JSON.parse(localStorage.getItem(`onestep:${LOCAL_MODE?'local:':''}events:${state.user.id}`)||'[]'); }
   catch { state.queue=[]; }
   state.queue=state.queue.filter(x=>Date.now()-x.stored_at<86400000);
@@ -152,12 +155,12 @@ function chatMessages() {
 }
 function tutorHTML() {
   const d=draft(), completed=state.practice.question_status==='solved';
-  return `<aside class="tutor-panel" aria-label="互動輔導助教"><header class="tutor-header"><div class="tutor-identity"><span class="tutor-avatar">${icon('spark')}</span><div><h2>一起想，別急。</h2><p>你的數學輔導助教</p></div></div><span class="pill"><span class="dot"></span>${LOCAL_MODE?(state.tutorProvider==='llm'?'AI 輔導':tutorConnection.settings().hasCode?'AI 連線已設定':'規則輔導'):state.boot.tutor_configured?'AI 已設定':'規則輔導'}</span></header>
+  return `<aside class="tutor-panel" aria-label="互動輔導助教"><header class="tutor-header"><div class="tutor-identity"><span class="tutor-avatar">${icon('spark')}</span><div><h2>一起想，別急。</h2><p>你的數學輔導助教</p></div></div><span class="pill"><span class="dot"></span>${LOCAL_MODE?(state.tutorProvider==='llm'?(LOCAL_CHATGPT?'ChatGPT 輔導':'AI 輔導'):tutorConnection.settings().hasCode?(LOCAL_CHATGPT?'ChatGPT 已授權':'AI 連線已設定'):'規則輔導'):state.boot.tutor_configured?'AI 已設定':'規則輔導'}</span></header>
     <div class="chat-area" id="chat-area" role="log" aria-live="polite" aria-label="輔導對話"><div class="chat-date">每一步，都由你自己完成</div><div class="message"><span class="mini-avatar">${icon('spark')}</span><div class="bubble"><span class="message-name">一步助教</span>嗨，準備好一起想一想了嗎？\n\n你可以問我觀念、請我給提示，或讓我檢查你自己寫出的算式。先從你知道的地方開始就好。</div></div>
       ${chatMessages().map(m=>`<div class="message ${m.role==='user'?'user':''}"><span class="mini-avatar">${icon('spark')}</span><div class="bubble">${esc(m.text)}</div></div>`).join('')}</div>
     <div class="quick-prompts"><button class="request-btn" id="hint-button" ${completed?'disabled':''}>${icon('bulb')}給我一點提示</button><button class="request-btn" id="concept-button" ${completed?'disabled':''}>${icon('book')}解釋這個觀念</button></div>
     <form class="chat-compose" id="chat-form"><div class="chat-input-row"><label class="hidden" for="chat-input">向助教提問</label><textarea id="chat-input" rows="2" maxlength="1000" placeholder="${completed?'做得很好，開始下一題再繼續聊。':'我想問……'}" ${completed?'disabled':''}>${esc(d.chat)}</textarea><button class="send-btn request-btn" id="send-message" type="submit" aria-label="送出問題" ${completed?'disabled':''}>${icon('send')}</button></div><div class="chat-compose-footer"><span>${icon('lock')}不代寫這題的解法與答案</span><span>Ctrl + Enter 送出</span></div></form>
-    <div class="tutor-limit">${LOCAL_MODE?(tutorConnection.settings().hasCode?'已設定 AI 連線 · AI 判讀提問，回覆使用受控提示。':'目前使用本機規則引導 · 可在「AI 連線設定」連接老師的輔導服務。'):state.boot.tutor_configured?'AI 協助選擇教學引導，回覆經受控提示規則處理。':'目前使用預先設計的引導；老師設定模型後可啟用 AI 判讀。'}</div></aside>`;
+    <div class="tutor-limit">${LOCAL_MODE?(LOCAL_CHATGPT?(tutorConnection.settings().hasCode?'使用自己的 ChatGPT 方案 · 模型只選提示卡，不顯示自由生成的文字。':'本機 ChatGPT 版 · 請在「AI 連線設定」登入並自行授權。'):(tutorConnection.settings().hasCode?'已設定 AI 連線 · AI 判讀提問，回覆使用受控提示。':'目前使用規則提示 · 可在「AI 連線設定」查看 ChatGPT 本機版。')):state.boot.tutor_configured?'AI 協助選擇教學引導，回覆經受控提示規則處理。':'目前使用預先設計的引導；老師設定模型後可啟用 AI 判讀。'}</div></aside>`;
 }
 function renderPractice() {
   if(!state.practice?.question) return;
@@ -174,22 +177,64 @@ function bindHeader() {
   $('#export-local')?.addEventListener('click',()=>runAction(async()=>{heartbeatRemainder();await flushEvents();downloadLocal(await api('/api/local/export'));}));
   $('#logout')?.addEventListener('click',()=>runAction(async()=>{
     heartbeatRemainder();await flushEvents();await api('/api/logout',{});state.user=null;state.practice=null;state.mode=null;state.queue=[];state.drafts={};
-    if(LOCAL_MODE){tutorConnection.disconnect();state.tutorProvider=null;}
+    if(LOCAL_MODE){await tutorConnection.disconnect();state.tutorProvider=null;}
     if(LOCAL_MODE)state.boot.local_profiles=(await api('/api/local/profiles')).profiles;
     renderLogin();
   }));
   $$('[data-page]').forEach(button=>button.addEventListener('click',()=>changePage(button.dataset.page)));
 }
 function showTutorSettings(){
+  if(LOCAL_CHATGPT)return showChatGPTSettings();
   const info=tutorConnection.settings(),dialog=document.createElement('dialog');dialog.className='tutor-settings-dialog';
-  dialog.innerHTML=`<form id="tutor-connect-form"><h2>連接 AI 輔導</h2><p>使用老師提供的輔導服務與試用通行碼。OpenAI 金鑰由後端保管，本頁不接受 API Key。</p><label class="label" for="tutor-endpoint">輔導服務網址</label><input class="input" id="tutor-endpoint" type="url" required value="${esc(info.endpoint)}" placeholder="https://老師提供的服務網址"><label class="label local-role-label" for="tutor-code">試用通行碼</label><input class="input" id="tutor-code" type="password" required autocomplete="off" placeholder="由老師提供，不是 API Key"><p class="recording">連線後，題目和你送出的提問會交由輔導服務判讀。暱稱、完整操作紀錄與其他學生資料不會一併傳送。通行碼只保留於這個頁籤。</p><p id="tutor-connect-error" class="form-error" role="alert"></p><div class="row"><button class="primary" type="submit">確認並連接</button><button class="secondary" type="button" id="tutor-disconnect">使用規則提示</button><button class="text-btn" type="button" id="tutor-close">關閉</button></div></form>`;
+  dialog.innerHTML=`<form id="tutor-connect-form"><h2>連接 AI 輔導</h2><p>想用自己的 ChatGPT 方案？<a href="https://github.com/HectorNet/one-step-algebra-pages/blob/main/local/README.md" target="_blank" rel="noopener noreferrer">開啟電腦本機版使用說明</a>，下載後執行 npm start，再於本機版登入。GitHub Pages 的規則提示仍可繼續使用。</p><p>以下是另外部署的輔導服務設定。OpenAI 金鑰由後端保管，本頁不接受 API Key。</p><label class="label" for="tutor-endpoint">輔導服務網址</label><input class="input" id="tutor-endpoint" type="url" required value="${esc(info.endpoint)}" placeholder="https://老師提供的服務網址"><label class="label local-role-label" for="tutor-code">試用通行碼</label><input class="input" id="tutor-code" type="password" required autocomplete="off" placeholder="由老師提供，不是 API Key"><p class="recording">連線後，題目和你送出的提問會交由輔導服務判讀。暱稱、完整操作紀錄與其他學生資料不會一併傳送。通行碼只保留於這個頁籤。</p><p id="tutor-connect-error" class="form-error" role="alert"></p><div class="row"><button class="primary" type="submit">確認並連接</button><button class="secondary" type="button" id="tutor-disconnect">使用規則提示</button><button class="text-btn" type="button" id="tutor-close">關閉</button></div></form>`;
   document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.showModal();
   $('#tutor-close',dialog).onclick=()=>dialog.close();
-  $('#tutor-disconnect',dialog).onclick=()=>{tutorConnection.disconnect();state.tutorProvider='rules';dialog.close();renderPractice();toast('已切換為本機規則提示。');};
+  $('#tutor-disconnect',dialog).onclick=async()=>{await tutorConnection.disconnect();state.tutorProvider='rules';dialog.close();renderPractice();toast('已切換為本機規則提示。');};
   $('#tutor-connect-form',dialog).onsubmit=async e=>{e.preventDefault();const b=$('button[type="submit"]',dialog);b.disabled=true;
     try{await tutorConnection.configure($('#tutor-endpoint',dialog).value,$('#tutor-code',dialog).value);state.tutorProvider=null;dialog.close();renderPractice();toast('AI 連線已設定；下一次提問時會嘗試模型判讀。');}
     catch(error){$('#tutor-connect-error',dialog).textContent=error.message;b.disabled=false;}
   };
+}
+async function showChatGPTSettings(){
+  const {localStatusMessage}=await import('./local-chatgpt.mjs');
+  const dialog=document.createElement('dialog');dialog.className='tutor-settings-dialog chatgpt-settings';
+  dialog.innerHTML=`<h2>用自己的 ChatGPT，陪你想。</h2><p>本機版透過 OpenAI 官方頁面登入，使用目前登入者自行授權的 ChatGPT 方案。這不是額外贈送的額度。</p><p class="recording">題目與你送出的提問會交由 OpenAI 判讀。模型只能選擇受控提示；完整學習紀錄與其他學生資料不會一併傳送。</p><div id="chatgpt-account-state" aria-live="polite"></div><p id="chatgpt-settings-error" class="form-error" role="alert"></p><div class="row"><button class="primary" id="chatgpt-add-account">Continue with ChatGPT</button><button class="secondary" id="chatgpt-refresh">重新整理狀態</button></div><p><a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noopener noreferrer">管理 ChatGPT 使用量與授權</a></p><p class="recording">每位學生需使用自己的合資格帳號。切換學習檔案會停止原連線，不會接續使用老師的方案。若帳號不支援，仍可使用規則提示。</p><div class="row"><button class="secondary" id="chatgpt-pause">暫停 AI，使用規則提示</button><button class="text-btn" id="chatgpt-close">關閉</button></div>`;
+  document.body.append(dialog);dialog.showModal();
+  let last='',polling=false;
+  function paint(info){
+    const current=JSON.stringify(info);if(current===last)return;last=current;
+    $('#chatgpt-account-state',dialog).innerHTML=`<div class="notice-banner"><strong>${info.verified?'ChatGPT 已實測可用':info.ready?'已授權，等待第一次實測':'尚未啟用 AI'}</strong><p>${esc(localStatusMessage(info.status))}</p>${info.email?`<p>使用中的帳號：${esc(info.email)}</p>`:''}</div>${info.connections.length?`<ul class="chatgpt-connections">${info.connections.map(c=>`<li><div><strong>${esc(c.email)}</strong><small>連線 ${esc(c.label)} · ${c.id===info.active?'使用中':c.signed_in?'已保存授權':'需要登入'}</small></div><button class="secondary" data-chatgpt-connect="${esc(c.id)}">${c.id===info.active?'重新授權':'連接'}</button><button class="text-btn" data-chatgpt-signout="${esc(c.id)}">登出並清除授權</button></li>`).join('')}</ul>`:''}${info.models.length?`<label class="label" for="chatgpt-model">目前帳號可用的模型</label><select class="input" id="chatgpt-model">${info.models.map(m=>`<option value="${esc(m.slug)}" ${m.slug===info.model?'selected':''}>${esc(m.display_name)}</option>`).join('')}</select><p class="recording">模型清單不等於已驗證可用；收到完整模型回覆後才會確認成功。</p>`:''}`;
+    $$('[data-chatgpt-connect]',dialog).forEach(b=>b.onclick=()=>connect(b.dataset.chatgptConnect));
+    $$('[data-chatgpt-signout]',dialog).forEach(b=>b.onclick=()=>act(async()=>{
+      const result=await tutorConnection.signOut(b.dataset.chatgptSignout);
+      if(!result.revoked)$('#chatgpt-settings-error',dialog).textContent='本機憑證已清除，但未能確認遠端撤銷。請至 ChatGPT 設定中中斷此應用程式的授權。';
+    }));
+    $('#chatgpt-model',dialog)?.addEventListener('change',e=>act(()=>tutorConnection.selectModel(e.target.value)));
+    track('ai_connection_state',{destination:info.status,visible:info.ready});
+  }
+  async function act(operation){
+    $$('button',dialog).forEach(b=>b.disabled=true);$('#chatgpt-settings-error',dialog).textContent='';
+    try{await operation();paint(await tutorConnection.refresh());}
+    catch(error){$('#chatgpt-settings-error',dialog).textContent=error.message||'暫時無法連線。';}
+    finally{$$('button',dialog).forEach(b=>b.disabled=false);}
+  }
+  async function connect(id){
+    const popup=window.open('about:blank','_blank');if(popup)popup.opener=null;
+    await act(async()=>{
+      try{
+        track('ai_connection_started',{destination:'chatgpt_plan'});
+        const target=await tutorConnection.start(id);
+        if(popup)popup.location.href=target;else window.location.assign(target);
+      }catch(error){popup?.close();throw error;}
+    });
+  }
+  $('#chatgpt-add-account',dialog).onclick=()=>connect();
+  $('#chatgpt-refresh',dialog).onclick=()=>act(()=>tutorConnection.models().catch(()=>tutorConnection.refresh()));
+  $('#chatgpt-close',dialog).onclick=()=>dialog.close();
+  $('#chatgpt-pause',dialog).onclick=()=>act(async()=>{await tutorConnection.disconnect();await tutorConnection.setContext(state.user.id,state.mode);});
+  const poll=setInterval(async()=>{if(polling||!dialog.isConnected)return;polling=true;try{paint(await tutorConnection.refresh());}finally{polling=false;}},2000);
+  dialog.addEventListener('close',()=>{clearInterval(poll);dialog.remove();state.tutorProvider=tutorConnection.settings().verified?'llm':null;if(state.page==='dashboard')renderDashboard();else renderPractice();},{once:true});
+  paint(await tutorConnection.refresh());
 }
 function downloadLocal(result){
   const url=URL.createObjectURL(new Blob([result.content],{type:result.type}));

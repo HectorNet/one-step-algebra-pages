@@ -1,3 +1,4 @@
+import {makeLocalChatGPT} from './local-chatgpt.mjs';
 // Provider secrets never enter this module. The classroom code authorizes our backend only.
 const CARDS = new Set(['hint','concept','check_work','encourage','off_topic','answer_boundary']);
 const DEFAULT_ENDPOINT='https://one-step-tutor-hectornet.quirkylion66.chatgpt.site';
@@ -36,4 +37,5 @@ export function makeRemoteTutor({preferences,session,fetcher=fetch}){
   return {settings,configure,disconnect,route};
 }
 let singleton;
-export function remoteTutor(){return singleton||=makeRemoteTutor({preferences:localStorage,session:sessionStorage});}
+export function remoteTutor(){return singleton||=(globalThis.document?.documentElement.dataset.runtime==='chatgpt'?
+  makeLocalChatGPT():makeRemoteTutor({preferences:localStorage,session:sessionStorage}));}

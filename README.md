@@ -1,8 +1,18 @@
-# 一步 One Step｜GitHub Pages 體驗版
+# 一步 One Step｜GitHub Pages 與本機 ChatGPT 版
 
 [開啟練習網站](https://hectornet.github.io/one-step-algebra-pages/)
 
 七年級「一元一次方程式」3-1～3-3 的課後練習，提供是非、單選、多選與自行輸入答案。題目由原創模板生成，配合各能力的練習進度調整難度。
+
+## 使用自己 ChatGPT 方案的新方式
+
+新增本機執行版本，沿用相同左右分欄：左側題目與作答、右側由 AI 選擇受控提示。**網站串接申請尚未獲確認核准；本機版使用另一條官方開源工具 OAuth 流程。**
+
+電腦安裝 Node.js 24，下載並解壓縮專案，於專案資料夾執行 `npm start`，開啟 **http://127.0.0.1:4318**，在「AI 連線設定」按 **Continue with ChatGPT**。不需要 API Key，也不用 `npm install`。Windows 可雙擊 `start.bat`。
+
+**需本人完成官方登入、額度授權與一次實際提問，才算驗證可用。** 學生使用各自合資格的帳號，不共用老師額度。GitHub Pages 仍提供原本的規則提示體驗。本機與 Pages 的學習紀錄分開儲存，請先匯出原有紀錄。
+
+詳細步驟、安全界線及故障處理見 [local/README.md](local/README.md)。
 
 ## 試用方式
 
@@ -25,6 +35,6 @@
 
 ## AI 連線更新
 
-已新增連線設定、模型 enum 驗證、失敗時的規則提示、請求去重及額度限制。**金鑰已由後端 secret 保存，老師私有後端已部署；目前 API 額度不足，AI 尚未啟用**；原有練習與紀錄可繼續使用。後端需求見 [backend/README.md](backend/README.md)。不能將 API Key 填進網站或前端建置產物。
+已新增連線設定、模型 enum 驗證、失敗時的規則提示、請求去重及額度限制。原本以 API Key 計費的私有後端維持停用；本機 ChatGPT 版不讀取或使用其金鑰，也不會自動切換成 API 計費。後端需求見 [backend/README.md](backend/README.md)。不能將 API Key 填進網站或前端建置產物。
 
 Node.js 24 執行 `npm test` 與 `npm run check` 可驗證公開版本，GitHub Actions 也會執行。測試使用模擬模型與真實 SQLite，沒有付費 API 呼叫。

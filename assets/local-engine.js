@@ -7,7 +7,7 @@ const publicQuestion=q=>Object.fromEntries(Object.entries(q).filter(([key])=>PUB
 const clone=x=>structuredClone(x);
 const boundary='我可以檢查你自己寫的答案或步驟，也可以陪你想；這題的解法與答案需要由你完成。先告訴我，你卡在題意、列式，還是計算？';
 const answerRequest=/直接.{0,8}(答案|解答)|給.{0,8}(答案|完整解|解題過程)|幫我解|代.{0,3}(寫|解)|忽略.{0,15}(規則|指令)|system\s*prompt|ignore.{0,20}instruction|(?:give|tell|show).{0,20}(?:answer|solution)|solve\s+(?:it|this)/i;
-const CLIENT_EVENTS=new Set(['question_viewed','answer_changed','explanation_changed','tab_visibility','window_focus','heartbeat','navigation','paste_detected','session_end','help_panel_toggled']);
+const CLIENT_EVENTS=new Set(['question_viewed','answer_changed','explanation_changed','tab_visibility','window_focus','heartbeat','navigation','paste_detected','session_end','help_panel_toggled','ai_connection_started','ai_connection_state']);
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
 const modeFor=user=>user.role==='teacher'?'teacher_trial':'student_operation';
 
@@ -210,7 +210,7 @@ export function makeAPI({store,curriculum,bank,session,uuid=()=>crypto.randomUUI
         if(d.chats.some(c=>c.client_id===body.client_id)||answerRequest.test(message)||/對嗎|檢查|算式|步驟|=/.test(message))return null;
         // Reserve assistance before waiting, so another tab cannot claim independent credit.
         row.assisted=true;
-        return {request_id:body.client_id,bank_id:row.bank_id,message,action:body.action||'chat'};
+        return {request_id:body.client_id,bank_id:row.bank_id,message,action:body.action||'chat',local_profile_id:user.id,local_mode:modeFor(user)};
       });
       if(request){try{remote=await router(request);}catch{remote={provider_status:'provider_unavailable'};}}
     }
